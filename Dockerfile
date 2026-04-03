@@ -49,6 +49,14 @@ RUN apt-get update \
     tini \
     python3 \
     python3-venv \
+    jq \
+    gh \
+    git \
+    curl \
+    ripgrep \
+    less \
+    procps \
+    unzip \
   && rm -rf /var/lib/apt/lists/*
 
 # `openclaw update` expects pnpm. Provide it in the runtime image.
