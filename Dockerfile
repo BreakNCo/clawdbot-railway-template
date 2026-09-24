@@ -2,7 +2,7 @@
 # reproducible while avoiding a source checkout and its internal entry path.
 FROM node:24-bookworm
 ENV NODE_ENV=production
-ARG OPENCLAW_VERSION=2026.9.5
+ARG OPENCLAW_VERSION=2026.9.6
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
