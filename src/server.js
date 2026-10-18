@@ -281,8 +281,34 @@ function startMemoryWatchdog() {
   }, GATEWAY_RSS_CHECK_MS).unref();
 }
 
+// OpenClaw leaves ~0.3-2 GB scratch dirs in /tmp on every start (plugin module
+// captures, model catalog downloads) and /tmp survives gateway restarts within a
+// container, so they pile up and inflate page cache / container memory.
+// Only touch dirs untouched for 10+ minutes so concurrent CLI runs are safe.
+function cleanStaleTmp() {
+  const cutoff = Date.now() - 10 * 60_000;
+  let removed = 0;
+  try {
+    for (const name of fs.readdirSync(os.tmpdir())) {
+      if (!/^openclaw-(plugin-build|model-catalog)-/.test(name)) continue;
+      const full = path.join(os.tmpdir(), name);
+      try {
+        if (fs.statSync(full).mtimeMs > cutoff) continue;
+        fs.rmSync(full, { recursive: true, force: true });
+        removed++;
+      } catch {
+        // best effort
+      }
+    }
+  } catch {
+    // best effort
+  }
+  if (removed) console.log(`[wrapper] removed ${removed} stale openclaw tmp dirs`);
+}
+
 async function startGateway() {
   if (gatewayProc) return;
+  cleanStaleTmp();
   if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
 
   fs.mkdirSync(STATE_DIR, { recursive: true });
