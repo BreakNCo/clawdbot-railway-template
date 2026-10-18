@@ -171,6 +171,116 @@ async function waitForGatewayReady(opts = {}) {
   return false;
 }
 
+const GATEWAY_MAX_HEAP_MB = Number.parseInt(process.env.OPENCLAW_GATEWAY_MAX_HEAP_MB ?? "1536", 10);
+// Restart the gateway when its RSS exceeds this (0 disables the watchdog).
+const GATEWAY_MAX_RSS_MB = Number.parseInt(process.env.OPENCLAW_GATEWAY_MAX_RSS_MB ?? "2500", 10);
+const GATEWAY_RSS_CHECK_MS = 5 * 60 * 1000;
+
+function withMaxOldSpace(existing, mb) {
+  const opts = existing?.trim() || "";
+  if (!mb || /--max-old-space-size/.test(opts)) return opts;
+  // --heapsnapshot-signal lets us run `kill -USR2 <gateway pid>` for an on-demand
+  // heap snapshot (written to the gateway's cwd) when diagnosing leaks.
+  return `${opts} --max-old-space-size=${mb} --heapsnapshot-signal=SIGUSR2`.trim();
+}
+
+function readRssMb(pid) {
+  try {
+    const m = /VmRSS:\s+(\d+) kB/.exec(fs.readFileSync(`/proc/${pid}/status`, "utf8"));
+    return m ? Math.round(Number(m[1]) / 1024) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Codex app-server children are kept alive indefinitely by the gateway and the
+// bundled Codex has no idle-unload (docs: plugins/codex-harness/troubleshooting).
+// Reap ones that have burned (almost) no CPU for CODEX_REAP_IDLE_MIN minutes.
+// Idle app-servers tick ~3-5 jiffies per 90s; active turns tick far more.
+const CODEX_REAP_IDLE_MIN = Number.parseInt(process.env.OPENCLAW_CODEX_REAP_IDLE_MIN ?? "360", 10);
+const CODEX_IDLE_TICKS_PER_CHECK = 100; // jiffies (10ms each) per check interval
+const codexIdle = new Map(); // pid -> { ticks, idleSince }
+
+function procStat(pid) {
+  try {
+    const raw = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    // comm may contain spaces/parens; fields after the last ')' are stable.
+    const f = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
+    return { ppid: Number(f[1]), ticks: Number(f[11]) + Number(f[12]) + Number(f[13]) + Number(f[14]) };
+  } catch {
+    return null;
+  }
+}
+
+function cmdline(pid) {
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+  } catch {
+    return "";
+  }
+}
+
+function reapIdleCodex() {
+  if (!CODEX_REAP_IDLE_MIN) return;
+  const now = Date.now();
+  const seen = new Set();
+  for (const name of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(name)) continue;
+    const pid = Number(name);
+    const cmd = cmdline(pid);
+    // Match the native binary only; its codex.js wrapper is handled via ppid.
+    if (!/\/bin\/codex\b.*\bapp-server\b/.test(cmd) || /codex\.js/.test(cmd)) continue;
+    const st = procStat(pid);
+    if (!st) continue;
+    seen.add(pid);
+    const prev = codexIdle.get(pid);
+    if (!prev || st.ticks - prev.ticks > CODEX_IDLE_TICKS_PER_CHECK) {
+      codexIdle.set(pid, { ticks: st.ticks, idleSince: now });
+      continue;
+    }
+    prev.ticks = st.ticks;
+    if (now - prev.idleSince < CODEX_REAP_IDLE_MIN * 60_000) continue;
+    const idleMin = Math.round((now - prev.idleSince) / 60_000);
+    console.warn(`[wrapper] reaping idle codex app-server pid=${pid} idle=${idleMin}m`);
+    // Kill the wrapper (parent, if it is codex.js) and the native binary.
+    const parent = st.ppid && /codex\.js/.test(cmdline(st.ppid)) ? st.ppid : null;
+    for (const target of [parent, pid]) {
+      if (!target) continue;
+      try {
+        process.kill(target, "SIGTERM");
+      } catch {
+        // already gone
+      }
+    }
+    codexIdle.delete(pid);
+  }
+  for (const pid of codexIdle.keys()) if (!seen.has(pid)) codexIdle.delete(pid);
+}
+
+function startMemoryWatchdog() {
+  if (!GATEWAY_MAX_RSS_MB && !CODEX_REAP_IDLE_MIN) return;
+  setInterval(() => {
+    try {
+      reapIdleCodex();
+    } catch (err) {
+      console.error(`[wrapper] codex reaper error: ${String(err)}`);
+    }
+  }, GATEWAY_RSS_CHECK_MS).unref();
+  if (!GATEWAY_MAX_RSS_MB) return;
+  setInterval(async () => {
+    if (!gatewayProc?.pid || gatewayStarting) return;
+    const rss = readRssMb(gatewayProc.pid);
+    if (rss && rss > GATEWAY_MAX_RSS_MB) {
+      console.warn(`[wrapper] gateway RSS ${rss} MiB > ${GATEWAY_MAX_RSS_MB} MiB; restarting`);
+      try {
+        await restartGateway();
+      } catch (err) {
+        console.error(`[wrapper] memory restart failed: ${String(err)}`);
+      }
+    }
+  }, GATEWAY_RSS_CHECK_MS).unref();
+}
+
 async function startGateway() {
   if (gatewayProc) return;
   if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
@@ -197,6 +307,11 @@ async function startGateway() {
       ...process.env,
       OPENCLAW_STATE_DIR: STATE_DIR,
       OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
+      // Memory tuning: glibc per-thread arenas inflate RSS far above V8 heap
+      // (observed ~1.8 GiB RSS vs ~0.8 GiB heap), and an uncapped heap lets
+      // long-running gateways creep. Both are overridable via Railway Variables.
+      MALLOC_ARENA_MAX: process.env.MALLOC_ARENA_MAX || "2",
+      NODE_OPTIONS: withMaxOldSpace(process.env.NODE_OPTIONS, GATEWAY_MAX_HEAP_MB),
     },
   });
 
@@ -1394,6 +1509,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   console.log(`[wrapper] listening on :${PORT}`);
   console.log(`[wrapper] state dir: ${STATE_DIR}`);
   console.log(`[wrapper] workspace dir: ${WORKSPACE_DIR}`);
+  startMemoryWatchdog();
 
   // Harden state dir for OpenClaw and avoid missing credentials dir on fresh volumes.
   try {
