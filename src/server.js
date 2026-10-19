@@ -257,7 +257,40 @@ function reapIdleCodex() {
   for (const pid of codexIdle.keys()) if (!seen.has(pid)) codexIdle.delete(pid);
 }
 
+// Page-cache eviction. OpenClaw writes several GB of scratch files to /tmp on each
+// start; the kernel keeps them as (reclaimable) page cache, which Railway's memory
+// graph counts (measured: ~4.5 GB of a 7.1 GB reading came from /tmp). Asking the
+// kernel to drop the cached pages (posix_fadvise DONTNEED via `dd iflag=nocache`)
+// deletes nothing and is safe; files are simply re-read from disk if used again.
+// SQLite DBs and WAL/SHM files are skipped so live databases keep their cache.
+const CACHE_EVICT_MIN = Number.parseInt(process.env.OPENCLAW_CACHE_EVICT_MIN ?? "5", 10);
+let cacheEvictRunning = false;
+
+function evictPageCache() {
+  if (cacheEvictRunning) return;
+  cacheEvictRunning = true;
+  const dirs = [os.tmpdir(), STATE_DIR].filter((d) => fs.existsSync(d));
+  const script =
+    'find "$@" -xdev -type f ! -name "*.sqlite*" ! -name "*-wal" ! -name "*-shm" -print0 2>/dev/null' +
+    " | xargs -0 -r -n64 sh -c 'for f; do dd if=\"$f\" iflag=nocache count=0 2>/dev/null; done' _";
+  const proc = childProcess.spawn("nice", ["-n", "19", "sh", "-c", script, "_", ...dirs], {
+    stdio: "ignore",
+  });
+  const done = () => {
+    cacheEvictRunning = false;
+  };
+  proc.on("error", done);
+  proc.on("exit", done);
+}
+
+function startCacheEviction() {
+  if (!CACHE_EVICT_MIN) return;
+  setTimeout(evictPageCache, 60_000).unref();
+  setInterval(evictPageCache, CACHE_EVICT_MIN * 60_000).unref();
+}
+
 function startMemoryWatchdog() {
+  startCacheEviction();
   if (!GATEWAY_MAX_RSS_MB && !CODEX_REAP_IDLE_MIN) return;
   setInterval(() => {
     try {
