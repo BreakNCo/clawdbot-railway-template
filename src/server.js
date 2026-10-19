@@ -306,8 +306,52 @@ function cleanStaleTmp() {
   if (removed) console.log(`[wrapper] removed ${removed} stale openclaw tmp dirs`);
 }
 
+// A redeploy swaps containers on the same /data volume, and the previous
+// container's gateway never gets to release its owner lease, so the new gateway
+// refuses to start ("Another Gateway owner lease is still active"). The wrapper
+// is the only thing that spawns the gateway in this container, so when we are
+// about to spawn one, any lease files whose pid is not alive here are stale.
+function clearStaleGatewayLocks() {
+  const tmpRoot = path.join(STATE_DIR, "tmp");
+  let cleared = 0;
+  try {
+    for (const dirName of fs.readdirSync(tmpRoot)) {
+      const dir = path.join(tmpRoot, dirName);
+      let names = [];
+      try {
+        names = fs.readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        if (!/^gateway(\.[0-9a-f]+|\.state)?\.lock$/.test(name)) continue;
+        const file = path.join(dir, name);
+        try {
+          const pid = Number(JSON.parse(fs.readFileSync(file, "utf8")).pid);
+          if (pid && fs.existsSync(`/proc/${pid}`) && pid !== process.pid) {
+            const cmd = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+            if (/openclaw/.test(cmd)) continue; // genuinely alive
+          }
+          fs.rmSync(file, { force: true });
+          cleared++;
+        } catch {
+          // unreadable/corrupt lock: treat as stale
+          try {
+            fs.rmSync(file, { force: true });
+            cleared++;
+          } catch {}
+        }
+      }
+    }
+  } catch {
+    // no tmp dir yet
+  }
+  if (cleared) console.log(`[wrapper] cleared ${cleared} stale gateway lock file(s)`);
+}
+
 async function startGateway() {
   if (gatewayProc) return;
+  clearStaleGatewayLocks();
   cleanStaleTmp();
   if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
 
@@ -379,7 +423,7 @@ async function ensureGatewayRunning() {
       try {
         lastGatewayError = null;
         await startGateway();
-        const ready = await waitForGatewayReady({ timeoutMs: 20_000 });
+        const ready = await waitForGatewayReady({ timeoutMs: 60_000 });
         if (!ready) {
           throw new Error("Gateway did not become ready in time");
         }
@@ -1591,11 +1635,17 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   // work even if nobody visits the web UI.
   if (isConfigured()) {
     console.log("[wrapper] config detected; starting gateway...");
-    try {
-      await ensureGatewayRunning();
-      console.log("[wrapper] gateway ready");
-    } catch (err) {
-      console.error(`[wrapper] gateway failed to start at boot: ${String(err)}`);
+    // Retry: a failed start (e.g. leftover lease) used to leave the bot down until
+    // someone hit the proxy. Back off and try again a few times.
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        await ensureGatewayRunning();
+        console.log("[wrapper] gateway ready");
+        break;
+      } catch (err) {
+        console.error(`[wrapper] gateway failed to start at boot (attempt ${attempt}/5): ${String(err)}`);
+        await sleep(15_000 * attempt);
+      }
     }
   }
 });
