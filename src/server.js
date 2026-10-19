@@ -8,6 +8,8 @@ import express from "express";
 import httpProxy from "http-proxy";
 import * as tar from "tar";
 
+import { reclaimForeignGatewayLease } from "./gateway-lease.js";
+
 // Migrate deprecated CLAWDBOT_* env vars → OPENCLAW_* so existing Railway deployments
 // keep working. Users should update their Railway Variables to use the new names.
 for (const suffix of ["PUBLIC_PORT", "STATE_DIR", "WORKSPACE_DIR", "GATEWAY_TOKEN", "CONFIG_PATH"]) {
@@ -385,6 +387,7 @@ function clearStaleGatewayLocks() {
 async function startGateway() {
   if (gatewayProc) return;
   clearStaleGatewayLocks();
+  await reclaimForeignGatewayLease({ stateDir: STATE_DIR });
   cleanStaleTmp();
   if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
 
