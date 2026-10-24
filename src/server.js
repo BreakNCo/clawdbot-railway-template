@@ -291,7 +291,63 @@ function startCacheEviction() {
   setInterval(evictPageCache, CACHE_EVICT_MIN * 60_000).unref();
 }
 
+// Periodic one-line memory report so the Railway memory graph can be explained from
+// `railway logs` alone (no SSH needed): cgroup total split into process memory vs
+// reclaimable page cache, plus RSS per process group.
+const MEM_LOG_MIN = Number.parseInt(process.env.OPENCLAW_MEM_LOG_MIN ?? "5", 10);
+
+function readCgroupMb() {
+  const out = {};
+  try {
+    out.total = Math.round(Number(fs.readFileSync("/sys/fs/cgroup/memory.current", "utf8")) / 1048576);
+    const stat = fs.readFileSync("/sys/fs/cgroup/memory.stat", "utf8");
+    for (const key of ["anon", "file", "inactive_file", "shmem"]) {
+      const m = new RegExp(`^${key} (\\d+)$`, "m").exec(stat);
+      if (m) out[key] = Math.round(Number(m[1]) / 1048576);
+    }
+  } catch {
+    // not cgroup v2
+  }
+  return out;
+}
+
+function logMemoryStats() {
+  const groups = { gateway: [0, 0], codex: [0, 0], codexNode: [0, 0], wrapper: [0, 0], other: [0, 0] };
+  try {
+    for (const name of fs.readdirSync("/proc")) {
+      if (!/^\d+$/.test(name)) continue;
+      const pid = Number(name);
+      const rss = readRssMb(pid);
+      if (rss === null) continue;
+      const cmd = cmdline(pid);
+      let g = "other";
+      if (pid === process.pid) g = "wrapper";
+      else if (/openclaw-gateway/.test(cmd)) g = "gateway";
+      else if (/\/bin\/codex\b.*\bapp-server\b/.test(cmd) && !/codex\.js/.test(cmd)) g = "codex";
+      else if (/codex\.js/.test(cmd)) g = "codexNode";
+      groups[g][0] += rss;
+      groups[g][1] += 1;
+    }
+  } catch {
+    // best effort
+  }
+  const cg = readCgroupMb();
+  const parts = Object.entries(groups)
+    .filter(([, [, n]]) => n > 0)
+    .map(([k, [mb, n]]) => `${k}=${mb}MB(${n})`);
+  console.log(
+    `[wrapper][mem] cgroup=${cg.total ?? "?"}MB anon=${cg.anon ?? "?"}MB file=${cg.file ?? "?"}MB (inactive=${cg.inactive_file ?? "?"}MB) shmem=${cg.shmem ?? 0}MB | rss ${parts.join(" ")}`,
+  );
+}
+
+function startMemoryLogging() {
+  if (!MEM_LOG_MIN) return;
+  setTimeout(logMemoryStats, 90_000).unref();
+  setInterval(logMemoryStats, MEM_LOG_MIN * 60_000).unref();
+}
+
 function startMemoryWatchdog() {
+  startMemoryLogging();
   startCacheEviction();
   if (!GATEWAY_MAX_RSS_MB && !CODEX_REAP_IDLE_MIN) return;
   setInterval(() => {
