@@ -23,9 +23,13 @@ RUN apt-get update \
 
 # npm 11.16+ and npm 12 require explicit approval for OpenClaw's lifecycle
 # scripts. Install before changing npm's global prefix to the /data volume.
+COPY scripts/patch-openclaw-cron-origin.mjs scripts/verify-openclaw-cron-origin.mjs /tmp/openclaw-cron-origin/
 RUN npm install --global --allow-scripts=openclaw "openclaw@${OPENCLAW_VERSION}" \
+  && node /tmp/openclaw-cron-origin/patch-openclaw-cron-origin.mjs "$(npm root --global)/openclaw" \
+  && OPENCLAW_STATE_DIR=/tmp/openclaw-origin-test-state OPENCLAW_WORKSPACE_DIR=/tmp/openclaw-origin-test-workspace node /tmp/openclaw-cron-origin/verify-openclaw-cron-origin.mjs "$(npm root --global)/openclaw" \
   && openclaw --version \
-  && npm cache clean --force
+  && npm cache clean --force \
+  && rm -rf /tmp/openclaw-cron-origin /tmp/openclaw-origin-test-state /tmp/openclaw-origin-test-workspace
 
 # Persist user-installed npm tools by default by targeting the Railway volume.
 ENV NPM_CONFIG_PREFIX=/data/npm
