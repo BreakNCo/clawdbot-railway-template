@@ -7,6 +7,7 @@
 # What it does:
 #   1. skills     keep the packetor-skills clone on the volume up to date (fast-forward only)
 #   2. config     apply OpenClaw settings: skills load path, #leads-capture mention rule
+#   2b. mcporter  add missing MCP servers (Firecrawl) to the Discord agent's mcporter.json
 #   3. agents     keep a managed routing block in the Discord agent's AGENTS.md
 #                 (text from <skills>/<name>/agents-block.md, else agents-blocks/<name>.md)
 #
@@ -105,6 +106,27 @@ apply_config() {
   fi
 }
 
+# ---------------------------------------------------------------- 2b. mcporter servers
+# Adds servers from mcporter-servers.json to the Discord agent's mcporter config when missing.
+# Never overwrites or removes an existing server (zoho-bigin etc. are managed by hand).
+apply_mcporter() {
+  local cfg="$DISCORD_WS/config/mcporter.json" add="$HERE/mcporter-servers.json" tmp
+  [ -f "$cfg" ] && [ -f "$add" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  tmp="$(mktemp)"
+  if jq --slurpfile add "$add" '.mcpServers = (($add[0]) + (.mcpServers // {}))' "$cfg" > "$tmp" 2>/dev/null; then
+    if [ "$(jq -S . "$tmp")" = "$(jq -S . "$cfg")" ]; then
+      log "mcporter: servers already present"
+    else
+      cp -a "$cfg" "$cfg.pre-packetor-config" 2>/dev/null
+      cat "$tmp" > "$cfg" && log "mcporter: added missing servers from mcporter-servers.json"
+    fi
+  else
+    log "mcporter: FAILED to merge servers"
+  fi
+  rm -f "$tmp"
+}
+
 # ---------------------------------------------------------------- 3. agents
 apply_agents_blocks() {
   local f="$DISCORD_WS/AGENTS.md"
@@ -153,6 +175,7 @@ PY
 log "start (skills=$SKILLS_DIR@$SKILLS_REF)"
 sync_skills
 apply_config
+apply_mcporter
 apply_agents_blocks
 log "done"
 exit 0

@@ -87,3 +87,17 @@ test("a block in the skills clone overrides the bundled one", () => {
   assert.ok(agents.includes(`read ${path.join(dir, "skills")}/x`));
   assert.ok(!agents.includes("NO_REPLY"));
 });
+
+test("sync.sh adds missing mcporter servers without touching existing ones", () => {
+  const { ws, env } = setup();
+  fs.mkdirSync(path.join(ws, "config"));
+  const cfg = path.join(ws, "config", "mcporter.json");
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { "zoho-bigin": { baseUrl: "https://example.invalid/mcp" } } }));
+  assert.equal(run(env).status, 0);
+  const after = JSON.parse(fs.readFileSync(cfg, "utf8"));
+  assert.equal(after.mcpServers["zoho-bigin"].baseUrl, "https://example.invalid/mcp");
+  assert.equal(after.mcpServers.firecrawl.command, "npx");
+  assert.equal(after.mcpServers.firecrawl.env.FIRECRAWL_API_KEY, "${FIRECRAWL_API_KEY}");
+  const again = run(env);
+  assert.match(again.stdout, /mcporter: servers already present/);
+});
