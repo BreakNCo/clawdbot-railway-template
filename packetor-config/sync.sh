@@ -98,6 +98,9 @@ apply_config() {
   fi
   set_json skills.load.extraDirs "$(jq -cn --arg d "$SKILLS_DIR" '[$d]')"
   set_json skills.load.watch true
+  # Un-mentioned posts (only #leads-capture accepts them) become quiet room events, so a bare
+  # NO_REPLY is honoured instead of being reported as a failed run. Replies need the message tool.
+  set_json messages.groupChat.unmentionedInbound '"room_event"'
   if [ -f "$HERE/discord.json" ]; then
     local gid chans
     gid="$(jq -r .guildId "$HERE/discord.json")"

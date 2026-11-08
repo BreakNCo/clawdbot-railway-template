@@ -53,6 +53,7 @@ test("sync.sh exits 0 without a token and applies config + one managed AGENTS.md
   assert.match(log, /skills\.load\.extraDirs/);
   assert.match(log, /channels\.discord\.guilds\.1447134676366921783\.channels/);
   assert.match(log, /"requireMention":false/);
+  assert.match(log, /messages\.groupChat\.unmentionedInbound "room_event"/);
 });
 
 test("sync.sh is idempotent for the AGENTS.md block", () => {
