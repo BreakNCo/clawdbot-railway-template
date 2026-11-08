@@ -8,6 +8,7 @@
 #   1. skills     keep the packetor-skills clone on the volume up to date (fast-forward only)
 #   2. config     apply OpenClaw settings: skills load path, #leads-capture mention rule
 #   3. agents     keep a managed routing block in the Discord agent's AGENTS.md
+#                 (text from <skills>/<name>/agents-block.md, else agents-blocks/<name>.md)
 #
 # Env (all optional):
 #   GITHUB_PAT_TOKEN            read-only token for the private skills repo (never written to disk)
@@ -113,6 +114,12 @@ apply_agents_blocks() {
   for blk in "$HERE"/agents-blocks/*.md; do
     [ -f "$blk" ] || continue
     name="$(basename "$blk" .md)"
+    # The skills repo owns the wording: <skills>/<name>/agents-block.md wins over the bundled copy,
+    # so routing changes ship with a skills update. The bundled file is the fallback.
+    if [ -f "$SKILLS_DIR/$name/agents-block.md" ]; then
+      log "agents: $name block source = $SKILLS_DIR/$name/agents-block.md"
+      blk="$SKILLS_DIR/$name/agents-block.md"
+    fi
     python3 -I - "$f" "$blk" "$name" "$SKILLS_DIR" <<'PY'
 import os, shutil, sys
 agents, block_file, name, skills_dir = sys.argv[1:5]

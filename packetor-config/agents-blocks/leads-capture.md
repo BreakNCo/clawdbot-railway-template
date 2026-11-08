@@ -1,10 +1,9 @@
 ## #leads-capture (channel 1566350552269328506) and its threads
 
-Every message in this channel, and in any thread under it, is handled with the `leads-capture`
-skill (`__SKILLS_DIR__/leads-capture/SKILL.md`). Read it before replying.
-
-- Reply exactly `NO_REPLY` unless the message is about a lead (a company or a person met at the
-  event) or asks Packetor something.
-- Never run web research, Apollo or other enrichment, or anything that spends credits, from this channel.
-- Keep replies short and mobile friendly, in the card format the skill defines. Never paste a full
-  Bigin record or a full research note.
+Decide first, before any tool call or file read: is the message about a lead (company, person met,
+a note about a conversation) or a direct question to Packetor? If not, your whole final answer is
+exactly `NO_REPLY`: call no tool, do not read the skill, do not use the `message` tool for it.
+If it is about a lead, read `__SKILLS_DIR__/leads-capture/SKILL.md` and follow it.
+Reach Bigin only with `python3 -I __SKILLS_DIR__/leads-capture/scripts/bigin.py`
+(do not type `mcporter`; it is not on your PATH). Never run research or spend credits from this
+channel. Keep replies to the card format.

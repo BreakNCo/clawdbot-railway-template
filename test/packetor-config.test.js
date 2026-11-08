@@ -45,6 +45,8 @@ test("sync.sh exits 0 without a token and applies config + one managed AGENTS.md
   assert.equal(agents.split("packetor-config:leads-capture:begin").length - 1, 1);
   assert.match(agents, /Existing rules\./);
   assert.match(agents, /1566350552269328506/);
+  assert.match(agents, /NO_REPLY/);
+  assert.match(agents, /bigin\.py/);
   assert.ok(!agents.includes("__SKILLS_DIR__"));
   assert.ok(fs.existsSync(path.join(ws, "AGENTS.md.pre-packetor-config")));
   const log = fs.readFileSync(calls, "utf8");
@@ -70,4 +72,18 @@ test("sync.sh skips config when OpenClaw is not onboarded yet", () => {
   assert.equal(r.status, 0);
   assert.match(r.stdout, /not onboarded yet/);
   assert.ok(!fs.existsSync(calls));
+});
+
+test("a block in the skills clone overrides the bundled one", () => {
+  const { dir, ws, env } = setup();
+  const skills = path.join(dir, "skills", "leads-capture");
+  fs.mkdirSync(skills, { recursive: true });
+  fs.writeFileSync(path.join(skills, "agents-block.md"), "## from skills clone\nread __SKILLS_DIR__/x\n");
+  fs.mkdirSync(path.join(dir, "skills", ".git"));
+  const r = run(env);
+  assert.equal(r.status, 0, r.stderr);
+  const agents = fs.readFileSync(path.join(ws, "AGENTS.md"), "utf8");
+  assert.match(agents, /## from skills clone/);
+  assert.ok(agents.includes(`read ${path.join(dir, "skills")}/x`));
+  assert.ok(!agents.includes("NO_REPLY"));
 });

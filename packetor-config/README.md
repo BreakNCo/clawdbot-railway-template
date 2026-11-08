@@ -11,7 +11,7 @@ railway ssh -- bash /app/packetor-config/sync.sh
 |---|---|---|
 | skills | clone/fast-forward `BreakNCo/packetor-skills` (`main`) into `/data/workspace/packetor-skills`; skips if the clone has local changes or is on another branch. Needs `GITHUB_PAT_TOKEN` (read-only, never written to disk) | env `PACKETOR_SKILLS_*` |
 | config | `skills.load.extraDirs`/`watch`, and the Discord channel map: reply without a mention in `#leads-capture`, mention required everywhere else | `discord.json` |
-| agents | managed routing block in the Discord agent's `AGENTS.md` (between `packetor-config:<name>` markers) | `agents-blocks/*.md` |
+| agents | managed routing block in the Discord agent's `AGENTS.md` (between `packetor-config:<name>` markers) | `<skills clone>/<name>/agents-block.md` if present (e.g. `leads-capture/agents-block.md` in packetor-skills, so wording ships with a skills update), else the bundled `agents-blocks/<name>.md` |
 
 Config steps are skipped until OpenClaw is onboarded (`/setup`); restart or re-run afterwards.
 Set `PACKETOR_CONFIG_SYNC=0` in Railway to switch the whole thing off. Manual edits to the keys above
