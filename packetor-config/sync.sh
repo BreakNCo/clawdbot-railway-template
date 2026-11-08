@@ -76,9 +76,12 @@ sync_skills() {
 # ---------------------------------------------------------------- 2. config
 # set_json <path> <json>: only writes when the value differs (a write triggers a config reload).
 set_json() {
-  local path="$1" want="$2" cur
+  local path="$1" want="$2" cur raw wantraw
   cur="$(openclaw config get "$path" 2>/dev/null | jq -S . 2>/dev/null || true)"
-  if [ -n "$cur" ] && [ "$cur" = "$(printf '%s' "$want" | jq -S .)" ]; then
+  # `config get` prints plain strings unquoted (room_event), so compare those raw as well.
+  raw="$(openclaw config get "$path" 2>/dev/null | tr -d '\n' || true)"
+  wantraw="$(printf '%s' "$want" | jq -r 'if type=="string" then . else empty end' 2>/dev/null || true)"
+  if { [ -n "$cur" ] && [ "$cur" = "$(printf '%s' "$want" | jq -S .)" ]; } || { [ -n "$wantraw" ] && [ "$raw" = "$wantraw" ]; }; then
     log "config: $path already set"
     return 0
   fi
@@ -101,6 +104,8 @@ apply_config() {
   # Un-mentioned posts (only #leads-capture accepts them) become quiet room events, so a bare
   # NO_REPLY is honoured instead of being reported as a failed run. Replies need the message tool.
   set_json messages.groupChat.unmentionedInbound '"room_event"'
+  # Typing indicator from the first second for the Discord agent (does not change who it answers).
+  set_json agents.entries.discord-ops.typingMode '"instant"'
   if [ -f "$HERE/discord.json" ]; then
     local gid chans
     gid="$(jq -r .guildId "$HERE/discord.json")"

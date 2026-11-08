@@ -54,6 +54,7 @@ test("sync.sh exits 0 without a token and applies config + one managed AGENTS.md
   assert.match(log, /channels\.discord\.guilds\.1447134676366921783\.channels/);
   assert.match(log, /"requireMention":false/);
   assert.match(log, /messages\.groupChat\.unmentionedInbound "room_event"/);
+  assert.match(log, /agents\.entries\.discord-ops\.typingMode "instant"/);
 });
 
 test("sync.sh is idempotent for the AGENTS.md block", () => {
@@ -101,4 +102,17 @@ test("sync.sh adds missing mcporter servers without touching existing ones", () 
   assert.equal(after.mcpServers.firecrawl.env.FIRECRAWL_API_KEY, "${FIRECRAWL_API_KEY}");
   const again = run(env);
   assert.match(again.stdout, /mcporter: servers already present/);
+});
+
+test("sync.sh does not rewrite string settings that `config get` prints unquoted", () => {
+  const { dir, calls, env } = setup();
+  fs.writeFileSync(
+    path.join(dir, "bin", "openclaw"),
+    `#!/bin/sh\nif [ "$2" = "set" ]; then echo "$@" >> "${calls}"; exit 0; fi\nif [ "$3" = "messages.groupChat.unmentionedInbound" ]; then echo room_event; exit 0; fi\nexit 1\n`,
+    { mode: 0o755 },
+  );
+  const r = run(env);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /config: messages\.groupChat\.unmentionedInbound already set/);
+  assert.doesNotMatch(fs.readFileSync(calls, "utf8"), /unmentionedInbound/);
 });
