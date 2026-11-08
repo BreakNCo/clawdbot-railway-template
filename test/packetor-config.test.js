@@ -1,0 +1,73 @@
+import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+const SYNC = path.resolve("packetor-config", "sync.sh");
+
+function setup() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "packetor-config-"));
+  const bin = path.join(dir, "bin");
+  const state = path.join(dir, "state");
+  const ws = path.join(dir, "discord-ws");
+  fs.mkdirSync(bin);
+  fs.mkdirSync(state);
+  fs.mkdirSync(ws);
+  fs.writeFileSync(path.join(state, "openclaw.json"), "{}");
+  fs.writeFileSync(path.join(ws, "AGENTS.md"), "# Discord Ops\n\nExisting rules.\n");
+  // Fake openclaw: records `config set` calls, returns "unset" for `config get`.
+  const calls = path.join(dir, "calls.log");
+  fs.writeFileSync(
+    path.join(bin, "openclaw"),
+    `#!/bin/sh\nif [ "$2" = "set" ]; then echo "$@" >> "${calls}"; exit 0; fi\nexit 1\n`,
+    { mode: 0o755 },
+  );
+  const env = {
+    PATH: `${bin}:${process.env.PATH}`,
+    HOME: dir,
+    OPENCLAW_STATE_DIR: state,
+    PACKETOR_SKILLS_DIR: path.join(dir, "skills"),
+    PACKETOR_DISCORD_WORKSPACE: ws,
+  };
+  return { dir, ws, calls, env };
+}
+
+const run = (env) => childProcess.spawnSync("bash", [SYNC], { env, encoding: "utf8" });
+
+test("sync.sh exits 0 without a token and applies config + one managed AGENTS.md block", () => {
+  const { ws, calls, env } = setup();
+  const r = run(env);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /GITHUB_PAT_TOKEN not set|cannot clone/);
+  const agents = fs.readFileSync(path.join(ws, "AGENTS.md"), "utf8");
+  assert.equal(agents.split("packetor-config:leads-capture:begin").length - 1, 1);
+  assert.match(agents, /Existing rules\./);
+  assert.match(agents, /1566350552269328506/);
+  assert.ok(!agents.includes("__SKILLS_DIR__"));
+  assert.ok(fs.existsSync(path.join(ws, "AGENTS.md.pre-packetor-config")));
+  const log = fs.readFileSync(calls, "utf8");
+  assert.match(log, /skills\.load\.extraDirs/);
+  assert.match(log, /channels\.discord\.guilds\.1447134676366921783\.channels/);
+  assert.match(log, /"requireMention":false/);
+});
+
+test("sync.sh is idempotent for the AGENTS.md block", () => {
+  const { ws, env } = setup();
+  run(env);
+  const first = fs.readFileSync(path.join(ws, "AGENTS.md"), "utf8");
+  const r = run(env);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /block already current/);
+  assert.equal(fs.readFileSync(path.join(ws, "AGENTS.md"), "utf8"), first);
+});
+
+test("sync.sh skips config when OpenClaw is not onboarded yet", () => {
+  const { dir, calls, env } = setup();
+  fs.rmSync(path.join(dir, "state", "openclaw.json"));
+  const r = run(env);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /not onboarded yet/);
+  assert.ok(!fs.existsSync(calls));
+});

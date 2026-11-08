@@ -43,6 +43,7 @@ COPY package.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
 COPY src ./src
+COPY packetor-config ./packetor-config
 
 # The wrapper listens on $PORT.
 # IMPORTANT: Do not set a default PORT here.

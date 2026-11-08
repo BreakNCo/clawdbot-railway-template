@@ -1708,6 +1708,20 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
     }
   }
 
+  // Config-as-code (packetor-config/): keep the packetor-skills clone current and apply the
+  // checked-in OpenClaw/Discord settings and agent routing blocks. Idempotent and best-effort:
+  // a failure here must never keep the gateway from starting. Disable with PACKETOR_CONFIG_SYNC=0.
+  const packetorSync = path.join(process.cwd(), "packetor-config", "sync.sh");
+  if (process.env.PACKETOR_CONFIG_SYNC !== "0" && fs.existsSync(packetorSync)) {
+    try {
+      const r = await runCmd("bash", [packetorSync], { timeoutMs: 3 * 60 * 1000 });
+      for (const line of redactSecrets(r.output || "").split("\n").filter(Boolean)) console.log(line);
+      if (r.code !== 0) console.warn(`[wrapper] packetor-config sync exited ${r.code} (continuing)`);
+    } catch (err) {
+      console.warn(`[wrapper] packetor-config sync failed (continuing): ${String(err)}`);
+    }
+  }
+
   // Sync gateway tokens in config with the current env var on every startup.
   // This prevents "gateway token mismatch" when OPENCLAW_GATEWAY_TOKEN changes
   // (e.g. Railway variable update) but the config file still has the old value.
