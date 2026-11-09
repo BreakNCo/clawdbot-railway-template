@@ -1,7 +1,13 @@
 {
   "guildId": "1447134676366921783",
   "channels": {
-    "1566350552269328506": { "enabled": true, "requireMention": false },
+    "1566350552269328506": {
+      "enabled": true,
+      "requireMention": false,
+      "autoThread": true,
+      "autoThreadName": "message",
+      "autoArchiveDuration": 4320
+    },
     "*": { "enabled": true, "requireMention": true }
   }
 }

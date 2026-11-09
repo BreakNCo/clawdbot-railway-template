@@ -106,6 +106,8 @@ apply_config() {
   set_json messages.groupChat.unmentionedInbound '"room_event"'
   # Typing indicator from the first second for the Discord agent (does not change who it answers).
   set_json agents.entries.discord-ops.typingMode '"instant"'
+  # each #leads-capture post runs in its own thread session, so several can run at once
+  set_json agents.defaults.maxConcurrent 10
   if [ -f "$HERE/discord.json" ]; then
     local gid chans
     gid="$(jq -r .guildId "$HERE/discord.json")"

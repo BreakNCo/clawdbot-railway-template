@@ -53,6 +53,8 @@ test("sync.sh exits 0 without a token and applies config + one managed AGENTS.md
   assert.match(log, /skills\.load\.extraDirs/);
   assert.match(log, /channels\.discord\.guilds\.1447134676366921783\.channels/);
   assert.match(log, /"requireMention":false/);
+  assert.match(log, /"autoThread":true/);
+  assert.match(log, /agents\.defaults\.maxConcurrent 10/);
   assert.match(log, /messages\.groupChat\.unmentionedInbound "room_event"/);
   assert.match(log, /agents\.entries\.discord-ops\.typingMode "instant"/);
 });
