@@ -7,7 +7,9 @@
 # What it does:
 #   1. skills     keep the packetor-skills clone on the volume up to date (fast-forward only)
 #   2. config     apply OpenClaw settings: skills load path, #leads-capture mention rule
+#   2b. mcporter  add missing MCP servers (Firecrawl) to the Discord agent's mcporter.json
 #   3. agents     keep a managed routing block in the Discord agent's AGENTS.md
+#                 (text from <skills>/<name>/agents-block.md, else agents-blocks/<name>.md)
 #
 # Env (all optional):
 #   GITHUB_PAT_TOKEN            read-only token for the private skills repo (never written to disk)
@@ -74,9 +76,12 @@ sync_skills() {
 # ---------------------------------------------------------------- 2. config
 # set_json <path> <json>: only writes when the value differs (a write triggers a config reload).
 set_json() {
-  local path="$1" want="$2" cur
+  local path="$1" want="$2" cur raw wantraw
   cur="$(openclaw config get "$path" 2>/dev/null | jq -S . 2>/dev/null || true)"
-  if [ -n "$cur" ] && [ "$cur" = "$(printf '%s' "$want" | jq -S .)" ]; then
+  # `config get` prints plain strings unquoted (room_event), so compare those raw as well.
+  raw="$(openclaw config get "$path" 2>/dev/null | tr -d '\n' || true)"
+  wantraw="$(printf '%s' "$want" | jq -r 'if type=="string" then . else empty end' 2>/dev/null || true)"
+  if { [ -n "$cur" ] && [ "$cur" = "$(printf '%s' "$want" | jq -S .)" ]; } || { [ -n "$wantraw" ] && [ "$raw" = "$wantraw" ]; }; then
     log "config: $path already set"
     return 0
   fi
@@ -96,12 +101,38 @@ apply_config() {
   fi
   set_json skills.load.extraDirs "$(jq -cn --arg d "$SKILLS_DIR" '[$d]')"
   set_json skills.load.watch true
+  # Un-mentioned posts (only #leads-capture accepts them) become quiet room events, so a bare
+  # NO_REPLY is honoured instead of being reported as a failed run. Replies need the message tool.
+  set_json messages.groupChat.unmentionedInbound '"room_event"'
+  # Typing indicator from the first second for the Discord agent (does not change who it answers).
+  set_json agents.entries.discord-ops.typingMode '"instant"'
   if [ -f "$HERE/discord.json" ]; then
     local gid chans
     gid="$(jq -r .guildId "$HERE/discord.json")"
     chans="$(jq -c .channels "$HERE/discord.json")"
     set_json "channels.discord.guilds.$gid.channels" "$chans"
   fi
+}
+
+# ---------------------------------------------------------------- 2b. mcporter servers
+# Adds servers from mcporter-servers.json to the Discord agent's mcporter config when missing.
+# Never overwrites or removes an existing server (zoho-bigin etc. are managed by hand).
+apply_mcporter() {
+  local cfg="$DISCORD_WS/config/mcporter.json" add="$HERE/mcporter-servers.json" tmp
+  [ -f "$cfg" ] && [ -f "$add" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  tmp="$(mktemp)"
+  if jq --slurpfile add "$add" '.mcpServers = (($add[0]) + (.mcpServers // {}))' "$cfg" > "$tmp" 2>/dev/null; then
+    if [ "$(jq -S . "$tmp")" = "$(jq -S . "$cfg")" ]; then
+      log "mcporter: servers already present"
+    else
+      cp -a "$cfg" "$cfg.pre-packetor-config" 2>/dev/null
+      cat "$tmp" > "$cfg" && log "mcporter: added missing servers from mcporter-servers.json"
+    fi
+  else
+    log "mcporter: FAILED to merge servers"
+  fi
+  rm -f "$tmp"
 }
 
 # ---------------------------------------------------------------- 3. agents
@@ -113,6 +144,12 @@ apply_agents_blocks() {
   for blk in "$HERE"/agents-blocks/*.md; do
     [ -f "$blk" ] || continue
     name="$(basename "$blk" .md)"
+    # The skills repo owns the wording: <skills>/<name>/agents-block.md wins over the bundled copy,
+    # so routing changes ship with a skills update. The bundled file is the fallback.
+    if [ -f "$SKILLS_DIR/$name/agents-block.md" ]; then
+      log "agents: $name block source = $SKILLS_DIR/$name/agents-block.md"
+      blk="$SKILLS_DIR/$name/agents-block.md"
+    fi
     python3 -I - "$f" "$blk" "$name" "$SKILLS_DIR" <<'PY'
 import os, shutil, sys
 agents, block_file, name, skills_dir = sys.argv[1:5]
@@ -146,6 +183,7 @@ PY
 log "start (skills=$SKILLS_DIR@$SKILLS_REF)"
 sync_skills
 apply_config
+apply_mcporter
 apply_agents_blocks
 log "done"
 exit 0
