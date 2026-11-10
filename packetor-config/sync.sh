@@ -101,9 +101,12 @@ apply_config() {
   fi
   set_json skills.load.extraDirs "$(jq -cn --arg d "$SKILLS_DIR" '[$d]')"
   set_json skills.load.watch true
-  # Un-mentioned posts (only #leads-capture accepts them) become quiet room events, so a bare
-  # NO_REPLY is honoured instead of being reported as a failed run. Replies need the message tool.
-  set_json messages.groupChat.unmentionedInbound '"room_event"'
+  # Un-mentioned posts (only #leads-capture accepts them) must stay normal requests: OpenClaw drops
+  # a channel's autoThread for "room_event" messages, so posts would not get their own thread and
+  # would queue in one channel session.
+  set_json messages.groupChat.unmentionedInbound '"user_request"'
+  # A silent turn (NO_REPLY for chatter, or after handing research to a background agent) is not a failure.
+  set_json agents.defaults.silentReply.group '"allow"'
   # Typing indicator from the first second for the Discord agent (does not change who it answers).
   set_json agents.entries.discord-ops.typingMode '"instant"'
   # each #leads-capture post runs in its own thread session, so several can run at once

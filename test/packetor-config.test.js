@@ -55,7 +55,8 @@ test("sync.sh exits 0 without a token and applies config + one managed AGENTS.md
   assert.match(log, /"requireMention":false/);
   assert.match(log, /"autoThread":true/);
   assert.match(log, /agents\.defaults\.maxConcurrent 10/);
-  assert.match(log, /messages\.groupChat\.unmentionedInbound "room_event"/);
+  assert.match(log, /agents\.defaults\.silentReply\.group "allow"/);
+  assert.match(log, /messages\.groupChat\.unmentionedInbound "user_request"/);
   assert.match(log, /agents\.entries\.discord-ops\.typingMode "instant"/);
 });
 
@@ -110,7 +111,7 @@ test("sync.sh does not rewrite string settings that `config get` prints unquoted
   const { dir, calls, env } = setup();
   fs.writeFileSync(
     path.join(dir, "bin", "openclaw"),
-    `#!/bin/sh\nif [ "$2" = "set" ]; then echo "$@" >> "${calls}"; exit 0; fi\nif [ "$3" = "messages.groupChat.unmentionedInbound" ]; then echo room_event; exit 0; fi\nexit 1\n`,
+    `#!/bin/sh\nif [ "$2" = "set" ]; then echo "$@" >> "${calls}"; exit 0; fi\nif [ "$3" = "messages.groupChat.unmentionedInbound" ]; then echo user_request; exit 0; fi\nexit 1\n`,
     { mode: 0o755 },
   );
   const r = run(env);
