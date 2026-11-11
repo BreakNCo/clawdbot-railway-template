@@ -111,6 +111,9 @@ apply_config() {
   set_json agents.entries.discord-ops.typingMode '"instant"'
   # each #leads-capture post runs in its own thread session, so several can run at once
   set_json agents.defaults.maxConcurrent 10
+  # Voice notes: transcribe with OpenAI gpt-4o-transcribe (already authorised through the OAuth login) and give it a spelling
+  # hint, because company names are unusual brand spellings. The company itself still comes from what a person types.
+  set_json tools.media.audio '{"enabled":true,"prompt":"A short voice note from a trade show about a company that was met, the person and their role. Company names are often unusual startup brand spellings, for example Navodyx, Appsmith, Retool, PayGlocal, Arsvitae, Mirrorfolio, Modner, TuckNow, Zoho, Bigin."}'
   if [ -f "$HERE/discord.json" ]; then
     local gid chans
     gid="$(jq -r .guildId "$HERE/discord.json")"

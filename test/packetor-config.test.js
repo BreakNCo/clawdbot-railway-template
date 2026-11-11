@@ -55,6 +55,7 @@ test("sync.sh exits 0 without a token and applies config + one managed AGENTS.md
   assert.match(log, /"requireMention":false/);
   assert.match(log, /"autoThread":true/);
   assert.match(log, /agents\.defaults\.maxConcurrent 10/);
+  assert.match(log, /tools\.media\.audio/);
   assert.match(log, /agents\.defaults\.silentReply\.group "allow"/);
   assert.match(log, /messages\.groupChat\.unmentionedInbound "user_request"/);
   assert.match(log, /agents\.entries\.discord-ops\.typingMode "instant"/);
