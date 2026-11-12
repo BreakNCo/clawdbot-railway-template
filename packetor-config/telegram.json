@@ -2,5 +2,8 @@
   "_comment": "Packets Agency (Telegram supergroup, forum): the Huddle lead flow runs in the listed topics only. Other topics (for example 'Call updates to Bigin') keep routing to the main agent exactly as before. 1787 = leads-capture, 1 = General.",
   "chatId": "-1003813238307",
   "agentId": "main",
-  "topics": ["1787"]
+  "topics": [
+    "1787",
+    "1"
+  ]
 }
