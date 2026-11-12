@@ -55,6 +55,7 @@ test("sync.sh exits 0 without a token and applies config + one managed AGENTS.md
   assert.match(log, /"requireMention":false/);
   assert.match(log, /"autoThread":true/);
   assert.match(log, /agents\.defaults\.maxConcurrent 10/);
+  assert.match(log, /tools\.media\.audio/);
   assert.match(log, /agents\.defaults\.silentReply\.group "allow"/);
   assert.match(log, /messages\.groupChat\.unmentionedInbound "user_request"/);
   assert.match(log, /agents\.entries\.discord-ops\.typingMode "instant"/);
@@ -105,6 +106,17 @@ test("sync.sh adds missing mcporter servers without touching existing ones", () 
   assert.equal(after.mcpServers.firecrawl.env.FIRECRAWL_API_KEY, "${FIRECRAWL_API_KEY}");
   const again = run(env);
   assert.match(again.stdout, /mcporter: servers already present/);
+});
+
+test("sync.sh links the mcporter config into ~/.mcporter so it works from any folder", () => {
+  const { ws, env } = setup();
+  fs.mkdirSync(path.join(ws, "config"));
+  const cfg = path.join(ws, "config", "mcporter.json");
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: {} }));
+  assert.equal(run(env).status, 0);
+  const link = path.join(env.HOME, ".mcporter", "mcporter.json");
+  assert.equal(fs.realpathSync(link), fs.realpathSync(cfg));
+  assert.equal(run(env).status, 0); // idempotent
 });
 
 test("sync.sh does not rewrite string settings that `config get` prints unquoted", () => {

@@ -111,6 +111,9 @@ apply_config() {
   set_json agents.entries.discord-ops.typingMode '"instant"'
   # each #leads-capture post runs in its own thread session, so several can run at once
   set_json agents.defaults.maxConcurrent 10
+  # Voice notes: transcribe with OpenAI gpt-4o-transcribe (already authorised through the OAuth login) and give it a spelling
+  # hint, because company names are unusual brand spellings. The company itself still comes from what a person types.
+  set_json tools.media.audio '{"enabled":true,"prompt":"A short voice note from a trade show about a company that was met, the person and their role. Company names are often unusual startup brand spellings, for example Navodyx, Appsmith, Retool, PayGlocal, Arsvitae, Mirrorfolio, Modner, TuckNow, Zoho, Bigin."}'
   if [ -f "$HERE/discord.json" ]; then
     local gid chans
     gid="$(jq -r .guildId "$HERE/discord.json")"
@@ -124,6 +127,13 @@ apply_config() {
 # Never overwrites or removes an existing server (zoho-bigin etc. are managed by hand).
 apply_mcporter() {
   local cfg="$DISCORD_WS/config/mcporter.json" add="$HERE/mcporter-servers.json" tmp
+  # Make the config reachable from any folder: mcporter only looks in ./config/mcporter.json and then
+  # ~/.mcporter/mcporter.json, so an agent running it from the skills folder saw "No MCP servers configured"
+  # and a research run failed with "Bigin MCP is unavailable on this worker" (12 Nov 2026, Lawqube).
+  if [ -f "$cfg" ] && [ -n "${HOME:-}" ]; then
+    mkdir -p "$HOME/.mcporter" 2>/dev/null && ln -sfn "$cfg" "$HOME/.mcporter/mcporter.json" \
+      && log "mcporter: global config linked at \$HOME/.mcporter/mcporter.json"
+  fi
   [ -f "$cfg" ] && [ -f "$add" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   tmp="$(mktemp)"

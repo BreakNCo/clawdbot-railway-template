@@ -137,6 +137,9 @@ function isConfigured() {
 })();
 
 let gatewayProc = null;
+// True while the wrapper itself is stopping the gateway (restart/stop/restore), so the
+// supervisor does not revive it. Cleared when a new gateway is spawned.
+let gatewayExpectedStop = false;
 let gatewayStarting = null;
 
 // Debug breadcrumbs for common Railway failures (502 / "Application failed to respond").
@@ -442,6 +445,7 @@ function clearStaleGatewayLocks() {
 
 async function startGateway() {
   if (gatewayProc) return;
+  gatewayExpectedStop = false;
   clearStaleGatewayLocks();
   await reclaimForeignGatewayLease({ stateDir: STATE_DIR });
   cleanStaleTmp();
@@ -484,11 +488,12 @@ async function startGateway() {
     gatewayProc = null;
   });
 
-  gatewayProc.on("exit", (code, signal) => {
+  const spawned = gatewayProc;
+  spawned.on("exit", (code, signal) => {
     const msg = `[gateway] exited code=${code} signal=${signal}`;
     console.error(msg);
     lastGatewayExit = { code, signal, at: new Date().toISOString() };
-    gatewayProc = null;
+    if (gatewayProc === spawned) gatewayProc = null;
   });
 }
 
@@ -534,18 +539,72 @@ async function ensureGatewayRunning() {
   return { ok: true };
 }
 
-async function restartGateway() {
-  if (gatewayProc) {
+// Stop the gateway and wait until the process has really exited. The gateway drains
+// active work for up to ~20 s on SIGTERM and keeps owning the state dir meanwhile, so
+// starting a new one earlier fails with exit 78 ("another gateway already owns this
+// state directory") and leaves the bot down.
+async function stopGatewayAndWait({ graceMs = 45_000 } = {}) {
+  const proc = gatewayProc;
+  if (!proc) return;
+  gatewayExpectedStop = true;
+  const exited = new Promise((resolve) => {
+    if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
+    proc.once("exit", () => resolve());
+  });
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    // ignore
+  }
+  const timedOut = Symbol("timeout");
+  let r = await Promise.race([exited, sleep(graceMs).then(() => timedOut)]);
+  if (r === timedOut) {
+    console.warn(`[wrapper] gateway did not exit within ${graceMs} ms of SIGTERM; sending SIGKILL`);
     try {
-      gatewayProc.kill("SIGTERM");
+      proc.kill("SIGKILL");
     } catch {
       // ignore
     }
-    // Give it a moment to exit and release the port.
-    await sleep(750);
-    gatewayProc = null;
+    await Promise.race([exited, sleep(10_000)]);
   }
+  if (gatewayProc === proc) gatewayProc = null;
+  // Small pause so the OS releases the port and the state lease.
+  await sleep(500);
+}
+
+async function restartGateway() {
+  await stopGatewayAndWait();
   return ensureGatewayRunning();
+}
+
+// Supervisor: if the gateway dies for a reason the wrapper did not cause (crash, failed
+// restart, OOM), start it again. Without this the bot stays down until someone opens
+// the web UI.
+let gatewayReviveFailures = 0;
+let gatewayReviveNotBefore = 0;
+function startGatewaySupervisor() {
+  setInterval(async () => {
+    try {
+      if (!isConfigured() || gatewayProc || gatewayStarting || gatewayExpectedStop) {
+        if (gatewayProc) gatewayReviveFailures = 0;
+        return;
+      }
+      if (Date.now() < gatewayReviveNotBefore) return;
+      console.warn(
+        `[wrapper] gateway is not running (last exit: ${JSON.stringify(lastGatewayExit)}); restarting`,
+      );
+      await ensureGatewayRunning();
+      gatewayReviveFailures = 0;
+      console.log("[wrapper] gateway revived by supervisor");
+    } catch (err) {
+      gatewayReviveFailures += 1;
+      const backoff = Math.min(15_000 * 2 ** gatewayReviveFailures, 5 * 60_000);
+      gatewayReviveNotBefore = Date.now() + backoff;
+      console.error(
+        `[wrapper] supervisor restart failed (${gatewayReviveFailures}); retry in ${Math.round(backoff / 1000)}s: ${String(err)}`,
+      );
+    }
+  }, 15_000).unref();
 }
 
 function requireSetupAuth(req, res, next) {
@@ -1280,11 +1339,7 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       return res.json({ ok: true, output: "Gateway restarted (wrapper-managed).\n" });
     }
     if (cmd === "gateway.stop") {
-      if (gatewayProc) {
-        try { gatewayProc.kill("SIGTERM"); } catch {}
-        await sleep(750);
-        gatewayProc = null;
-      }
+      await stopGatewayAndWait();
       return res.json({ ok: true, output: "Gateway stopped (wrapper-managed).\n" });
     }
     if (cmd === "gateway.start") {
@@ -1426,11 +1481,7 @@ app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
   try {
     // Stop gateway to avoid running gateway + onboard concurrently on small Railway instances.
     try {
-      if (gatewayProc) {
-        try { gatewayProc.kill("SIGTERM"); } catch {}
-        await sleep(750);
-        gatewayProc = null;
-      }
+      await stopGatewayAndWait();
     } catch {
       // ignore
     }
@@ -1544,11 +1595,7 @@ app.post("/setup/import", requireSetupAuth, async (req, res) => {
     }
 
     // Stop gateway before restore so we don't overwrite live files.
-    if (gatewayProc) {
-      try { gatewayProc.kill("SIGTERM"); } catch {}
-      await sleep(750);
-      gatewayProc = null;
-    }
+    await stopGatewayAndWait();
 
     const buf = await readBodyBuffer(req, 250 * 1024 * 1024); // 250MB max
     if (!buf.length) return res.status(400).type("text/plain").send("Empty body\n");
@@ -1672,6 +1719,7 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   console.log(`[wrapper] state dir: ${STATE_DIR}`);
   console.log(`[wrapper] workspace dir: ${WORKSPACE_DIR}`);
   startMemoryWatchdog();
+  startGatewaySupervisor();
 
   // Harden state dir for OpenClaw and avoid missing credentials dir on fresh volumes.
   try {
@@ -1777,6 +1825,7 @@ server.on("upgrade", async (req, socket, head) => {
 
 process.on("SIGTERM", () => {
   // Best-effort shutdown
+  gatewayExpectedStop = true;
   try {
     if (gatewayProc) gatewayProc.kill("SIGTERM");
   } catch {
