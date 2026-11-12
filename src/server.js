@@ -178,7 +178,12 @@ async function waitForGatewayReady(opts = {}) {
 
 const GATEWAY_MAX_HEAP_MB = Number.parseInt(process.env.OPENCLAW_GATEWAY_MAX_HEAP_MB ?? "1536", 10);
 // Restart the gateway when its RSS exceeds this (0 disables the watchdog).
-const GATEWAY_MAX_RSS_MB = Number.parseInt(process.env.OPENCLAW_GATEWAY_MAX_RSS_MB ?? "2500", 10);
+// Measured on the 8 GB Railway box (12 Nov 2026, Huddle Global): with 3-7 concurrent
+// agent runs the healthy gateway sits at 2.0-2.9 GiB RSS, so the old 2500 limit fired a
+// restart every 10-40 minutes and aborted live runs. 4000 leaves room for that working
+// set (container peak was ~5.9 GiB incl. reclaimable page cache) while still catching a
+// real leak long before the 8 GB cgroup limit.
+const GATEWAY_MAX_RSS_MB = Number.parseInt(process.env.OPENCLAW_GATEWAY_MAX_RSS_MB ?? "4000", 10);
 const GATEWAY_RSS_CHECK_MS = 5 * 60 * 1000;
 
 function withMaxOldSpace(existing, mb) {
