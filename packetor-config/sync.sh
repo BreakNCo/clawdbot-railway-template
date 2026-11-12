@@ -7,6 +7,7 @@
 # What it does:
 #   1. skills     keep the packetor-skills clone on the volume up to date (fast-forward only)
 #   2. config     apply OpenClaw settings: skills load path, #leads-capture mention rule
+#   2c. telegram  route the leads-capture topic of the Packets Agency Telegram group to the lead flow (telegram.json)
 #   2b. mcporter  add missing MCP servers (Firecrawl) to the Discord agent's mcporter.json
 #   3. agents     keep a managed routing block in the Discord agent's AGENTS.md
 #                 (text from <skills>/<name>/agents-block.md, else agents-blocks/<name>.md)
@@ -122,6 +123,26 @@ apply_config() {
   fi
 }
 
+# ---------------------------------------------------------------- 2c. Telegram leads-capture topic
+# The Huddle lead flow also runs in ONE forum topic of the Packets Agency Telegram group (telegram.json). Only that topic is configured:
+# its own routing block (<skills>/leads-capture/agents-block-telegram.md, the wording ships with a skills update) goes in as the topic's
+# systemPrompt. The group entry repeats requireMention=false because an exact group entry does not inherit the "*" entry. The General
+# topic and every other topic are not named here, so they keep routing to the main agent as before.
+apply_telegram_topic() {
+  local cfg="$HERE/telegram.json" blk="$SKILLS_DIR/leads-capture/agents-block-telegram.md"
+  [ -f "$cfg" ] || return 0
+  command -v openclaw >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { log "telegram: openclaw or jq missing, skipped"; return; }
+  [ -f "$STATE_DIR/openclaw.json" ] || { log "telegram: not onboarded yet, skipped"; return; }
+  [ -f "$blk" ] || { log "telegram: $blk missing, skipped"; return; }
+  local chat topic agent prompt group
+  chat="$(jq -r .chatId "$cfg")"; topic="$(jq -r .topicId "$cfg")"; agent="$(jq -r .agentId "$cfg")"
+  [ -n "$chat" ] && [ -n "$topic" ] && [ -n "$agent" ] || { log "telegram: telegram.json incomplete, skipped"; return; }
+  prompt="$(sed "s#__SKILLS_DIR__#$SKILLS_DIR#g" "$blk")"
+  group="$(jq -cn --arg a "$agent" --arg t "$topic" --arg p "$prompt" \
+    '{requireMention: false, topics: {($t): {agentId: $a, requireMention: false, systemPrompt: $p}}}')"
+  set_json "channels.telegram.groups.$chat" "$group"
+}
+
 # ---------------------------------------------------------------- 2b. mcporter servers
 # Adds servers from mcporter-servers.json to the Discord agent's mcporter config when missing.
 # Never overwrites or removes an existing server (zoho-bigin etc. are managed by hand).
@@ -198,6 +219,7 @@ PY
 log "start (skills=$SKILLS_DIR@$SKILLS_REF)"
 sync_skills
 apply_config
+apply_telegram_topic
 apply_mcporter
 apply_agents_blocks
 log "done"
