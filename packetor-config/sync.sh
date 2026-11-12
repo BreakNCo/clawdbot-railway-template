@@ -134,13 +134,18 @@ apply_telegram_topic() {
   command -v openclaw >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { log "telegram: openclaw or jq missing, skipped"; return; }
   [ -f "$STATE_DIR/openclaw.json" ] || { log "telegram: not onboarded yet, skipped"; return; }
   [ -f "$blk" ] || { log "telegram: $blk missing, skipped"; return; }
-  local chat topic agent prompt group
-  chat="$(jq -r .chatId "$cfg")"; topic="$(jq -r .topicId "$cfg")"; agent="$(jq -r .agentId "$cfg")"
-  [ -n "$chat" ] && [ -n "$topic" ] && [ -n "$agent" ] || { log "telegram: telegram.json incomplete, skipped"; return; }
-  prompt="$(sed "s#__SKILLS_DIR__#$SKILLS_DIR#g" "$blk")"
-  group="$(jq -cn --arg a "$agent" --arg t "$topic" --arg p "$prompt" \
-    '{requireMention: false, topics: {($t): {agentId: $a, requireMention: false, systemPrompt: $p}}}')"
-  set_json "channels.telegram.groups.$chat" "$group"
+  local chat agent topic text topics_json="{}"
+  chat="$(jq -r .chatId "$cfg")"; agent="$(jq -r .agentId "$cfg")"
+  [ -n "$chat" ] && [ -n "$agent" ] && [ "$(jq '.topics | length' "$cfg" 2>/dev/null || echo 0)" -gt 0 ] || { log "telegram: telegram.json incomplete, skipped"; return; }
+  text="$(sed "s#__SKILLS_DIR__#$SKILLS_DIR#g" "$blk")"
+  for topic in $(jq -r '.topics[]' "$cfg"); do
+    topics_json="$(jq -cn --argjson cur "$topics_json" --arg t "$topic" --arg a "$agent" --arg p "${text//__TOPIC_ID__/$topic}" \
+      '$cur + {($t): {agentId: $a, requireMention: false, systemPrompt: $p}}')"
+  done
+  set_json "channels.telegram.groups.$chat" "$(jq -cn --argjson t "$topics_json" '{requireMention: false, topics: $t}')"
+  # No "Working / Bash" status messages and no big link-preview cards under every card (applies to the whole Telegram channel).
+  set_json channels.telegram.streaming '{"mode":"partial","preview":{"toolProgress":false}}'
+  set_json channels.telegram.linkPreview false
 }
 
 # ---------------------------------------------------------------- 2b. mcporter servers
