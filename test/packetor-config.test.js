@@ -108,6 +108,17 @@ test("sync.sh adds missing mcporter servers without touching existing ones", () 
   assert.match(again.stdout, /mcporter: servers already present/);
 });
 
+test("sync.sh links the mcporter config into ~/.mcporter so it works from any folder", () => {
+  const { ws, env } = setup();
+  fs.mkdirSync(path.join(ws, "config"));
+  const cfg = path.join(ws, "config", "mcporter.json");
+  fs.writeFileSync(cfg, JSON.stringify({ mcpServers: {} }));
+  assert.equal(run(env).status, 0);
+  const link = path.join(env.HOME, ".mcporter", "mcporter.json");
+  assert.equal(fs.realpathSync(link), fs.realpathSync(cfg));
+  assert.equal(run(env).status, 0); // idempotent
+});
+
 test("sync.sh does not rewrite string settings that `config get` prints unquoted", () => {
   const { dir, calls, env } = setup();
   fs.writeFileSync(
