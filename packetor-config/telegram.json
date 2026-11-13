@@ -1,7 +1,7 @@
 {
-  "_comment": "Packets Agency (Telegram supergroup, forum): the Huddle lead flow runs in the listed topics only. Other topics (for example 'Call updates to Bigin') keep routing to the main agent exactly as before. 1787 = leads-capture, 1 = General.",
+  "_comment": "Packets Agency (Telegram supergroup, forum): the Huddle lead flow runs in the listed topics only. Other topics (for example 'Call updates to Bigin') keep routing to the main agent exactly as before. 1787 = leads-capture, 1 = General. Runs on the discord-ops agent because the main agent's Codex account hit its usage limit on 13 Nov 2026 and discord-ops uses the Sebastian account.",
   "chatId": "-1003813238307",
-  "agentId": "main",
+  "agentId": "discord-ops",
   "topics": [
     "1787",
     "1"
